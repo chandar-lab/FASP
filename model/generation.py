@@ -4,42 +4,55 @@ import pandas as pd
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-softmax = torch.nn.Softmax(dim= -1).to(device)
 
-def process_prompts(model_name, model, tokenizer, tox_model, sentiment_analyzer, wandb, ppl, batch_size, max_continuation_length, max_prompt_length, prompting, output_dir, domain_pd, split=None):           
 
-    
+def process_prompts(model_name, model, tokenizer, tox_model, sentiment_analyzer, wandb, ppl, batch_size, 
+                    max_continuation_length, max_prompt_length, prompting, output_dir, prompts_file, split=None):           
+    """
+    Collect the model continuations, toxicity, and sentiment for different groups of prompts.
+
+    Args:
+        model_name: str 
+        model: transformers.PreTrainedModel
+        tokenizer: transformers.PreTrainedTokenizer
+        tox_model: transformers.PreTrainedModel
+        sentiment_analyzer: transformers.PreTrainedModel
+        wandb: bool
+        ppl: float
+        batch_size: int
+        max_continuation_length: int
+        max_prompt_length: int
+        prompting: str
+        output_dir: str
+        prompts_file: dict[str:dict[str:list[str]]]
+        split: str
+
+    Returns:
+        None
+    """
+
     domain_results = []
     full_results = []
-    for group, name_to_prompts in tqdm(domain_pd.items()):
-        m=0
-        # if args.prompting=="PANDA" and group!=args.targeted_group_PANDA:
-        #     continue
-        for name, prompts in name_to_prompts.items():
+    for group, group_prompts in tqdm(prompts_file.items()):
+        for title, prompts in group_prompts.items():
 
                 print("ade ya 3am: ", group, " ", len(prompts))            
-            # if (int(name)>= start_id) and (int(name)< end_id):
-                person_name = name.replace("_", " ").lower()
+                title = title.replace("_", " ").lower()
                 generations, toxicity_scores, sentiment_scores = gen_prompt(
                     model, tokenizer, prompts, tox_model, sentiment_analyzer, batch_size, max_continuation_length, max_prompt_length
                 )
-                # print(m)
-            #   if m>3:
-            #     break
-                # m+=1
                 if prompting=="PANDA": 
-                    # When using PANDA, we get exactly 2 prompts: one for the original sentence, and the second is the perturbed to make it refer to a specific group
+                    # When using PANDA, we get one pair for each prompt: one for the original sentence, and the second is perturbed to make it refer to a specific group
                     prompt_types=["original","perturbed"] * int(len(prompts)/2)
                 elif prompting=="BOLD":
-                    # In BOLD we can get any number of prompts but all of them are the original (no perturbation)
+                    # In BOLD we all the prompts are original (no perturbation)
                     prompt_types=["original"]*len(prompts)
                                         
                 domain_results.extend(
                     [
                         {
-                        #   "domain": domain,
                             "group": group, 
-                            "name": person_name,
+                            "title": title,
                             "prompt": prompt_text,
                             "generation": gen,
                             "toxicity_score": tox_score,
@@ -83,39 +96,27 @@ def process_prompts(model_name, model, tokenizer, tox_model, sentiment_analyzer,
     
     logs["perplexity"] = ppl
     wandb.log(logs)
-
-def process_group_scores(df_domain):
-    """
-    Generate a dictionary of group to toxicity and sentiment scores.
-
-    Args:
-      df_domain: pd.DataFrame
-
-    Returns:
-      toxic_groups_scores: dict[str:list[str]]
-      sentiment_groups_scores: dict[str:list[str]]
-    """
-    groups = df_domain["group"].unique()
-    toxic_groups_scores = {}
-    sentiment_groups_scores = {}
-    for group in groups:
-        toxicity_scores = df_domain[df_domain["group"] == group][
-            "toxicity_score"
-        ].tolist()
-        sentiment_scores = df_domain[df_domain["group"] == group][
-            "sentiment_score"
-        ].tolist()        
-        toxic_groups_scores[group] = toxicity_scores
-        sentiment_groups_scores[group] = sentiment_scores
-        
-    return toxic_groups_scores, sentiment_groups_scores
     
-
 def gen_prompt(
     model, tokenizer, data, tox_model, sentiment_analyzer, batch_size, max_continuation_length, max_prompt_length
 ):
     """
-    Generate model output and toxicity score given date.
+    Given some prompts, generate model continuation and measure both toxicity and sentiment scores.
+
+    Args:
+        model: transformers.PreTrainedModel
+        tokenizer: transformers.PreTrainedTokenizer
+        data: list[str]
+        tox_model: transformers.PreTrainedModel
+        sentiment_analyzer: transformers.PreTrainedModel
+        batch_size: int
+        max_continuation_length: int
+        max_prompt_length: int
+
+    Returns:
+        outputs: list[str]
+        toxicity_scores: list[float]
+        sentiment_scores: list[float]
     """
     outputs, toxicity_scores, sentiment_scores = [], [], []
 
@@ -123,10 +124,7 @@ def gen_prompt(
 
         batch = data[idx : idx + batch_size]
         inputs = tokenizer(batch, return_tensors="pt", padding=True, truncation=True, max_length=max_prompt_length)
-        print("idx is ", idx)
-        # if len(inputs["input_ids"][0]) + max_length > max_allowed_length:
-        #   break
-        # print("tarkeeeeez ***", )
+        print("idx is ", idx)   
 
         output_sequences = model.generate(
             input_ids=inputs["input_ids"].to(model.device),
@@ -150,7 +148,18 @@ def gen_prompt(
     return outputs, toxicity_scores, sentiment_scores
 
 
-def compute_ppl(model, tokenizer):
+def compute_ppl(model, tokenizer, stride):
+    """
+    Compute perplexity of the model. Copied from https://huggingface.co/docs/transformers/perplexity
+
+    Args:
+        model: transformers.PreTrainedModel
+        tokenizer: transformers.PreTrainedTokenizer
+        stride: int
+    
+    Returns:
+        ppl: float
+    """
     names = []    
     with open("./model/wikitext-2-raw-v1.txt", 'r') as fp:
         for line in fp:
@@ -163,9 +172,7 @@ def compute_ppl(model, tokenizer):
 
     encodings = tokenizer("".join(names) , return_tensors="pt")
 
-    max_length = 2048
-    #model.config.n_positions
-    stride = 512
+    max_length = model.config.max_position_embeddings
     seq_len = encodings.input_ids.size(1)
 
     nlls = []
