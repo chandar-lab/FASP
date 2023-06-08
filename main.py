@@ -1,32 +1,20 @@
 import torch
-import random
-import re
-import os
-import pandas as pd
 import wandb
 import json
 import numpy as np
 from argparse import ArgumentParser
-from tqdm.notebook import tqdm
 from pathlib import Path
-from detoxify import Detoxify
-from scipy.stats import anderson_ksamp
-from model.metrics import calculate_significance,evaluate_fairness_disparity
-from model.generation import gen_prompt,process_group_scores,process_prompts,compute_ppl
+from model.generation import process_prompts,compute_ppl
 from utils import get_head_dim_idx
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-from transformers import GPT2LMHeadModel, GPT2TokenizerFast
-
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-softmax = torch.nn.Softmax(dim=0).to(device)
 
 def parse_args():
     """Parses the command line arguments."""
     parser = ArgumentParser()
-    # choosing between our work and the baselines
     parser.add_argument(
         "--seed",
         type=int,
@@ -40,35 +28,11 @@ def parse_args():
         help="learning rate for the language generation models",
     )     
     parser.add_argument(
-        "--attention_dropout",
-        type=float,
-        default=None,
-        help="attention dropout in the language generation models",
-    )
-    parser.add_argument(
         "--head_knockout",
         type=int,
         default=None,
         help="the id of the attention head to be knocked out in the language generation models",
     )    
-    parser.add_argument(
-        "--num_layers",
-        type=int,
-        default=None,
-        help="number of layers in the language generation models",
-    )
-    parser.add_argument(
-        "--num_heads",
-        type=int,
-        default=None,
-        help="number of heads in the language generation models",
-    )
-    parser.add_argument(
-        "--hidden_size",
-        type=int,
-        default=None,
-        help="hidden size in the language generation models",
-    )
     parser.add_argument(
         "--beta",
         type=float,
@@ -95,7 +59,7 @@ def parse_args():
             "EleutherAI/gpt-neo-2.7B",
         ],
         default="EleutherAI/gpt-neo-125M",
-        help="Type of model used",
+        help="Type of language generation model used",
     )
     parser.add_argument(
         "--method",
@@ -124,16 +88,12 @@ def parse_args():
     parser.add_argument(
         "--prompting",
         choices=[
-            "M_CM",
-            "CF_F",
-            "MCF_FCM",
-            "M_F",
             "rtp",
             "PANDA",
             "BOLD",
         ],
         default="PANDA",
-        help="Type of model used",
+        help="Type of prompt used for the language model",
     )   
     parser.add_argument(
         "--targeted_group_PANDA",
@@ -154,7 +114,7 @@ def parse_args():
             "senior",            
         ],
         default=None,
-        help="The group for which biased is assessed",
+        help="The group for which biased is assessed using the PANDA framework",
     )        
     parser.add_argument(
         "--targeted_bias_BOLD",
@@ -166,31 +126,25 @@ def parse_args():
             "religious_ideology",        
         ],
         default=None,
-        help="The targeted bias that is assessed in BOLD",
+        help="The group for which biased is assessed using the BOLD framework",
     )            
     parser.add_argument(
         "--batch_size",
         type=int,
         default=256,
-        help="Batch size for the classifier.",
+        help="Batch size for the language model.",
     )
     parser.add_argument(
-        "--prompt_chunk_id",
+        "--stride",
         type=int,
-        default=0,
-        help="The id of the prompt chunk that we work on. To make the experiments faster, we split the prompts into chunks, and process them in parallel.",
-    )  
-    parser.add_argument(
-        "--prompt_chunk_size",
-        type=int,
-        default=5000,
-        help="The number of examples in one prompt chunk",
-    )        
+        default=512,
+        help="Stride used for computing the model preplexity. This corresponds to the number of tokens the model conditions on at each step.",
+    )    
     parser.add_argument(
         "--max_continuation_length",
         type=int,
         default=50,
-        help="The maximum length of the continuation that we choose to give to the language generation model",
+        help="The maximum length of the continuation for the language generation model",
     )
     parser.add_argument(
         "--max_prompt_length",
@@ -199,16 +153,10 @@ def parse_args():
         help="The maximum length of the prompt for the language generation model",
     )    
     parser.add_argument(
-        "--model_checkpoint_path",
-        default="./saved_models/checkpoint-",
-        help="Path to the saved classifier checkpoint",
-    )
-    parser.add_argument(
         "--output_dir",
         default="output/",
         help="Directory to the output",
     )
-    
     parser.add_argument(
         "--use_wandb",
         type=bool,
@@ -232,35 +180,13 @@ def parse_args():
         type=float,
         default=0.1,
         help="The standard deviation of the noise in the random perturbation, as the original paper https://proceedings.neurips.cc/paper/2020/file/1d8d70dddf147d2d92a634817f01b239-Paper.pdf",
-    )            
-    parser.add_argument(
-        "--famous_names",
-        type=bool,
-        default=False,
-        help="Whether or not to use names of famous actors/actresses",
-    )    
-    parser.add_argument(
-        "--use_amulet",
-        type=bool,
-        default=False,
-        help="Whether or not to run the code on Amulet, which is the cluster used at Microsoft research",
-    )      
-    parser.add_argument(
-        "--analyze_attention",
-        type=bool,
-        default=False,
-        help="Whether or not to analyze the attention map",
-    )                    
+    )               
+                  
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-
-    if args.seed != None:
-        my_seed = args.seed
-    else:
-        my_seed = np.random.randint(10000, size=1)[0]
 
     if args.use_wandb:
         wandb_mode = "online"
@@ -274,42 +200,28 @@ if __name__ == "__main__":
         mode=wandb_mode,
     )
 
-    # output_dir = args.output_dir
-
-    # if args.use_amulet:
-    #     output_dir = f"{os.environ['AMLT_OUTPUT_DIR']}/" + output_dir
-
     path_to_prompts= "./prompts/" + str(args.prompting) + "/"
 
     if args.model in ["gpt2", "gpt2-medium", "gpt2-large", "distilgpt2"]:
         model = GPT2LMHeadModel.from_pretrained(args.model).to(device)
     else:
-        model = AutoModelForCausalLM.from_pretrained("./saved_models/cached_models/" + args.model)
-    if args.attention_dropout:
-        model.config.attention_dropout=args.attention_dropout
-
-    if args.num_layers:
-        model.config.num_layers=args.num_layers
-
-    if args.num_heads:
-        model.config.num_heads=args.num_heads
-
-    if args.hidden_size:
-        model.config.hidden_size=args.hidden_size
+        model = AutoModelForCausalLM.from_pretrained("./saved_models/cached_models/" + args.model).to(device)
 
     if args.method == None:
         # this is the case when we are trying to knock out only one head to know the effect pf removing it on fairness and performance
         idx_pruned_heads = [args.head_knockout]
     else:
-        # this is when we are systemetically pruning a large percentage of heads
+        # this is the other case when we are systemetically pruning some percentage of the total heads
         head_contributions = json.load(open("./model/head_contributions.json", "r"))
         idx_pruned_heads = []
         num_heads = model.config.num_hidden_layers * model.config.num_heads
         if int(num_heads * args.pruned_heads_ratio) != 0:
             # We execlude the case where there is nothing to prune
             if args.method == "random":
+                # random pruning chooses a random subset of heads to prune
                 idx_pruned_heads = list(np.random.choice(num_heads, int(num_heads * args.pruned_heads_ratio), replace=False))  
             elif args.method == "magnitude":
+                # magnitude pruning chooses the heads with the lowest magnitude to prune
                 magnitude_scores = head_contributions[args.model]["weight_magnitude"]
                 threshold = np.sort(np.array(magnitude_scores))[int(num_heads * args.pruned_heads_ratio)-1]
                 idx_pruned_heads = [index for index, item in enumerate(magnitude_scores) if item <= threshold]
@@ -353,12 +265,7 @@ if __name__ == "__main__":
     tokenizer.pad_token = tokenizer.eos_token
     if tokenizer.pad_token is None:
         tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-    model=model.to(device)
-    # print("yaaaa rb")
-    # print("argoook")
-    ppl = compute_ppl(model,tokenizer)
-    # tox_model = Detoxify("unbiased")
-    # tox_model = torch.load("./saved_models/detoxify/pytorch_model.bin").to(device)
+    ppl = compute_ppl(model,tokenizer, args.stride)
     tox_model = torch.load("./saved_models/unbiased/unbiased.pt")
     tox_model.device = device 
     sentiment_analyzer = SentimentIntensityAnalyzer()   
@@ -367,18 +274,18 @@ if __name__ == "__main__":
     if args.prompting=="PANDA":
         for split in ["valid"]: 
             output_dir = args.output_dir + "/prompt_" + str(args.prompting) + "_" + str(args.beta) + "_" + str(args.random_perturbation) + "_h" + str(args.head_knockout) 
-            domain_pd = json.load(open(path_to_prompts + "social_biases_" + split + ".json", "r"))
+            prompts_file = json.load(open(path_to_prompts + "social_biases_" + split + ".json", "r"))
             output_dir += "_" + split + "/"
             output_dir +=  str(args.method) + "_" + str(args.pruned_heads_ratio) + "_alpha" + str(args.alpha)  + "/"
             Path(output_dir).mkdir(parents=True, exist_ok=True)
-            process_prompts(model_name, model, tokenizer, tox_model, sentiment_analyzer, wandb, ppl, args.batch_size, args.max_continuation_length, args.max_prompt_length, args.prompting, output_dir, domain_pd, split)
+            process_prompts(model_name, model, tokenizer, tox_model, sentiment_analyzer, wandb, ppl, args.batch_size, args.max_continuation_length, args.max_prompt_length, args.prompting, output_dir, prompts_file, split)
             
     elif args.prompting=="BOLD":
         output_dir = args.output_dir + "/prompt_" + str(args.prompting) + "_" + str(args.targeted_bias_BOLD) + "_" + str(args.beta) + "_" + str(args.random_perturbation) + "_h" + str(args.head_knockout) + "/"
         output_dir +=  str(args.method) + "_" + str(args.pruned_heads_ratio) + "_alpha" + str(args.alpha)  + "/"
         Path(output_dir).mkdir(parents=True, exist_ok=True)
-        domain_pd = json.load(open(path_to_prompts + args.targeted_bias_BOLD + "_prompt.json", "r"))
-        process_prompts(model_name, model, tokenizer, tox_model, sentiment_analyzer, wandb, ppl, args.batch_size, args.max_continuation_length, args.max_prompt_length, args.prompting, output_dir, domain_pd, split=None)
+        prompts_file = json.load(open(path_to_prompts + args.targeted_bias_BOLD + "_prompt.json", "r"))
+        process_prompts(model_name, model, tokenizer, tox_model, sentiment_analyzer, wandb, ppl, args.batch_size, args.max_continuation_length, args.max_prompt_length, args.prompting, output_dir, prompts_file, split=None)
 
     
 
