@@ -1,0 +1,16 @@
+pytorch-pretrained-bert
+detoxify
+wandb
+torch
+pandas
+numpy
+matplotlib
+seaborn
+gender-bender==0.1.3
+scipy
+huggingface-hub==0.11.1
+transformers
+tqdm
+vaderSentiment
+ipywidgets
+ipykernel 
