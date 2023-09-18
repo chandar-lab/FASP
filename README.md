@@ -1,4 +1,4 @@
-# Fairness-Aware-Structured-Pruning-in-Transformers (FASP AAAI 2024)
+# Fairness-Aware Structured Pruning in Transformers (FASP)
 Welcome to the official repository for the AAAI 2024 submission “Fairness-Aware Structured Pruning in Transformers”. We present a novel method to prune the attention heads that negatively impact fairness in transformer-based models while retaining most of the language modeling ability.
 
 ## How it works
