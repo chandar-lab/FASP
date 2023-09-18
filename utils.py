@@ -1,23 +1,32 @@
-import torch
 
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-def get_head_dim_idx(head, model):
+def parameters_to_prune(model_name, model):
     """
-    Get the start and end indices of the head to be pruned using the model's hidden states.
+    Get the parameters to be pruned. Some parts are taken from https://github.com/sai-prasanna/bert-experiments/blob/master/src/run_glue.py
     Args:
-        head: int
+        model_name: str
         model: transformers.PreTrainedModel
     Returns:
-        start: int
-        end: int
-        layer: int
+        parameters_to_prune: list
     """
+
+    parameters_to_prune = []
+
     
-    layer = int(head/model.config.num_attention_heads)
-    head_dim = int(model.config.hidden_size/model.config.num_attention_heads)
-    start = head_dim*(head - layer*model.config.num_attention_heads)
-    end = head_dim*(head - (layer*model.config.num_attention_heads) + 1)
-    return start, end, layer
+    if model_name in ["gpt2", "gpt2-medium", "gpt2-large", "distilgpt2"]:
+        layers = model.base_model.h
+        
+    for layer in layers:
+        parameters = [
+            (layer.attn.c_attn, 'weight'),
+            (layer.attn.c_attn, 'bias'),
+            (layer.attn.c_proj, 'weight'),
+            (layer.attn.c_proj, 'bias'),   
+            (layer.mlp.c_fc, 'weight'),
+            (layer.mlp.c_fc, 'bias'),
+            (layer.mlp.c_proj, 'weight'),
+            (layer.mlp.c_proj, 'bias'),                        
+        ]
+        parameters_to_prune.extend(parameters)
+
+    return parameters_to_prune
+
