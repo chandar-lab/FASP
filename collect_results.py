@@ -10,7 +10,7 @@ from main import parse_args
 import json
 import numpy as np
 from argparse import ArgumentParser
-
+# this file is used to collect the results from the different runs of the experiments and save them in a csv file
 
 def parse_args():
     """Parses the command line arguments."""

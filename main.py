@@ -5,7 +5,7 @@ import numpy as np
 from argparse import ArgumentParser
 from pathlib import Path
 from model.generation import process_prompts,compute_ppl
-from utils import get_head_dim_idx, parameters_to_prune
+from utils import parameters_to_prune
 from transformers import BloomForCausalLM, AutoModelForCausalLM, AutoTokenizer, AutoModelWithLMHead, BloomTokenizerFast, AutoModelForCausalLM, GPT2Tokenizer, GPTJForCausalLM
 from transformers_pruning import BloomForCausalLM, GPTNeoForCausalLM, GPTNeoXForCausalLM, OPTForCausalLM
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
@@ -66,7 +66,8 @@ def parse_args():
             "EleutherAI/pythia-1.4b",
             "EleutherAI/pythia-2.8b",
             "EleutherAI/pythia-6.9b",
-            "EleutherAI/pythia-12b",            
+            "EleutherAI/pythia-12b",     
+            "EleutherAI/gpt-j-6B"       
         ],
         default="EleutherAI/gpt-neo-125M",
         help="Type of language generation model used",
