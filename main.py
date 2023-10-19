@@ -249,44 +249,42 @@ if __name__ == "__main__":
 
     if args.model in ["gpt2", "gpt2-medium", "gpt2-large", "distilgpt2",  "gpt2-xl"]:
         model = AutoModelWithLMHead.from_pretrained("./saved_models/cached_models/" + args.model).to(device)
-        tokenizer_gen = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left")   # Initialize tokenizer for generation
-        tokenizer_ppl = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right")   # Initialize tokenizer for perplexity
 
     elif args.model in ["distilroberta-base", "distilbert-base-cased", "bert-base-cased",  "bert-large-cased", "roberta-base","roberta-large"]:
         model = AutoModelWithLMHead.from_pretrained("./saved_models/cached_models/" + args.model).to(device)
-        tokenizer_gen = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left")   # Initialize tokenizer for generation
-        tokenizer_ppl = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right")   # Initialize tokenizer for perplexity
 
     elif args.model in ["EleutherAI/gpt-neo-125M", "EleutherAI/gpt-neo-1.3B", "EleutherAI/gpt-neo-2.7B"]:
         model = GPTNeoForCausalLM.from_pretrained("./saved_models/cached_models/" + args.model).to(device)
-        tokenizer_gen = GPT2Tokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left") # Initialize tokenizer for generation
-        tokenizer_ppl = GPT2Tokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") # Initialize tokenizer for perplexity
 
     elif args.model in ["EleutherAI/gpt-j-6B"]:
         model = GPTJForCausalLM.from_pretrained("./saved_models/cached_models/" + args.model, revision="float16",torch_dtype=torch.float16,).to(device)
-        tokenizer_gen = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left") # Initialize tokenizer for generation
-        tokenizer_ppl = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") # Initialize tokenizer for perplexity
 
     elif args.model in ["facebook/opt-350m", "facebook/opt-1.3b", "facebook/opt-2.7b", "facebook/opt-6.7b"]:
         model = OPTForCausalLM.from_pretrained("./saved_models/cached_models/" + args.model).to(device)
-        tokenizer_gen = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left")  # Initialize tokenizer for generation
-        tokenizer_ppl = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") # Initialize tokenizer for perplexity
 
     elif args.model in ["bigscience/bloom-560m", "bigscience/bloom-1b1","bigscience/bloom-3b", "bigscience/bloom-7b1"]:
         model = BloomForCausalLM.from_pretrained("./saved_models/cached_models/" + args.model).to(device)
-        tokenizer_gen = BloomTokenizerFast.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left") # Initialize tokenizer for generation
-        tokenizer_ppl = BloomTokenizerFast.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") # Initialize tokenizer for perplexity
 
     elif args.model in ["EleutherAI/pythia-70m","EleutherAI/pythia-160m","EleutherAI/pythia-410m","EleutherAI/pythia-1b","EleutherAI/pythia-1.4b","EleutherAI/pythia-2.8b","EleutherAI/pythia-6.9b","EleutherAI/pythia-12b"]:
         model = GPTNeoXForCausalLM.from_pretrained("./saved_models/cached_models/" + args.model).to(device)
-        tokenizer_gen = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left") # Initialize tokenizer for generation
-        tokenizer_ppl = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") # Initialize tokenizer for perplexity
 
     elif args.model in ["meta-llama/Llama-2-7b"]:
         model = LlamaForCausalLM.from_pretrained("./saved_models/cached_models/" + args.model, revision="float16",torch_dtype=torch.float16,).to(device)
-        tokenizer_gen = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left") # Initialize tokenizer for generation
-        tokenizer_ppl = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") # Initialize tokenizer for perplexity
-        
+       
+
+    if args.model in ["EleutherAI/gpt-neo-125M", "EleutherAI/gpt-neo-1.3B", "EleutherAI/gpt-neo-2.7B"]:
+        tokenizer_gen = GPT2Tokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left") # Initialize tokenizer for generation
+        tokenizer_ppl = GPT2Tokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") # Initialize tokenizer for perplexity
+    
+    elif args.model in ["bigscience/bloom-560m", "bigscience/bloom-1b1","bigscience/bloom-3b", "bigscience/bloom-7b1"]:
+        tokenizer_gen = BloomTokenizerFast.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left") 
+        tokenizer_ppl = BloomTokenizerFast.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") 
+
+    else:
+        tokenizer_gen = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left")
+        tokenizer_ppl = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") 
+
+
     model_configs = json.load(open("./model/models_config.json", "r"))
     num_heads, num_layers = model_configs[args.model]["num_heads"], model_configs[args.model]["num_layers"] 
     head_dim, max_length = model_configs[args.model]["head_dim"], model_configs[args.model]["max_length"] 
