@@ -6,8 +6,8 @@ from argparse import ArgumentParser
 from pathlib import Path
 from model.generation import process_prompts,compute_ppl
 from utils import parameters_to_prune
-from transformers import BloomForCausalLM, AutoModelForCausalLM, AutoTokenizer, AutoModelWithLMHead, BloomTokenizerFast, AutoModelForCausalLM, GPT2Tokenizer, GPTJForCausalLM
-from transformers_pruning import BloomForCausalLM, GPTNeoForCausalLM, GPTNeoXForCausalLM, OPTForCausalLM
+from transformers_pruning import AutoTokenizer, BloomTokenizerFast, GPT2Tokenizer
+from transformers_pruning import BloomForCausalLM, GPTNeoForCausalLM, GPTNeoXForCausalLM, OPTForCausalLM, GPTJForCausalLM, AutoModelForCausalLM, AutoModelWithLMHead
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import torch.nn.utils.prune as prune
 
@@ -67,7 +67,9 @@ def parse_args():
             "EleutherAI/pythia-2.8b",
             "EleutherAI/pythia-6.9b",
             "EleutherAI/pythia-12b",     
-            "EleutherAI/gpt-j-6B"       
+            "EleutherAI/gpt-j-6B",
+            "meta-llama/Llama-2-7b",   
+            "meta-llama/Llama-2-7b-chat-hf",    
         ],
         default="EleutherAI/gpt-neo-125M",
         help="Type of language generation model used",
@@ -93,7 +95,7 @@ def parse_args():
     parser.add_argument(
         "--pruned_heads_ratio",
         type=float,
-        default=0,
+        default=0.0,
         help="The ratio of the pruned attention heads",
     )       
     parser.add_argument(
@@ -170,10 +172,10 @@ def parse_args():
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=128,
+        default=1024,
         help="Batch size for the language model.",
     )
-    #1024
+    #128
     parser.add_argument(
         "--stride",
         type=int,
@@ -213,7 +215,7 @@ def parse_args():
         "--use_gender_scores",
         type=bool,
         default=True,
-        help="Whether or not to the head scores for gender bias when reducing other biases",
+        help="Whether or not to use the head scores for gender bias when reducing other biases",
     )
     parser.add_argument(
         "--use_wandb",
@@ -247,57 +249,58 @@ if __name__ == "__main__":
 
     if args.model in ["gpt2", "gpt2-medium", "gpt2-large", "distilgpt2",  "gpt2-xl"]:
         model = AutoModelWithLMHead.from_pretrained("./saved_models/cached_models/" + args.model).to(device)
-        tokenizer = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left")   # Initialize tokenizer
-        # number of heads per layer, and number of layers
-        num_heads, num_layers = model.config.n_head, model.config.n_layer
-        head_dim, max_length = int(model.config.n_embd/num_heads), model.config.n_positions 
+        tokenizer_gen = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left")   # Initialize tokenizer for generation
+        tokenizer_ppl = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right")   # Initialize tokenizer for perplexity
 
     elif args.model in ["distilroberta-base", "distilbert-base-cased", "bert-base-cased",  "bert-large-cased", "roberta-base","roberta-large"]:
         model = AutoModelWithLMHead.from_pretrained("./saved_models/cached_models/" + args.model).to(device)
-        tokenizer = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left")   # Initialize tokenizer
-        # number of heads per layer, and number of layers
-        num_heads, num_layers = model.config.num_attention_heads, model.config.num_hidden_layers
-        head_dim, max_length = int(model.config.hidden_size/num_heads), model.config.max_position_embeddings 
-    
+        tokenizer_gen = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left")   # Initialize tokenizer for generation
+        tokenizer_ppl = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right")   # Initialize tokenizer for perplexity
 
     elif args.model in ["EleutherAI/gpt-neo-125M", "EleutherAI/gpt-neo-1.3B", "EleutherAI/gpt-neo-2.7B"]:
         model = GPTNeoForCausalLM.from_pretrained("./saved_models/cached_models/" + args.model).to(device)
-        tokenizer = GPT2Tokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left")
-        num_heads, num_layers = model.config.num_heads, model.config.num_layers
-        head_dim, max_length = int(model.config.hidden_size/num_heads), model.config.max_position_embeddings 
+        tokenizer_gen = GPT2Tokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left") # Initialize tokenizer for generation
+        tokenizer_ppl = GPT2Tokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") # Initialize tokenizer for perplexity
 
     elif args.model in ["EleutherAI/gpt-j-6B"]:
-        model = AutoModelForCausalLM.from_pretrained("./saved_models/cached_models/" + args.model).to(device)
-        tokenizer = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left")
-        num_heads, num_layers = model.config.n_head, model.config.n_layer
-        head_dim, max_length = int(model.config.n_embd/num_heads), model.config.n_positions 
+        model = GPTJForCausalLM.from_pretrained("./saved_models/cached_models/" + args.model, revision="float16",torch_dtype=torch.float16,).to(device)
+        tokenizer_gen = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left") # Initialize tokenizer for generation
+        tokenizer_ppl = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") # Initialize tokenizer for perplexity
 
     elif args.model in ["facebook/opt-350m", "facebook/opt-1.3b", "facebook/opt-2.7b", "facebook/opt-6.7b"]:
         model = OPTForCausalLM.from_pretrained("./saved_models/cached_models/" + args.model).to(device)
-        tokenizer = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left")
-        num_heads, num_layers = model.config.num_attention_heads, model.config.num_hidden_layers
-        head_dim, max_length = int(model.config.hidden_size/num_heads), model.config.max_position_embeddings 
+        tokenizer_gen = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left")  # Initialize tokenizer for generation
+        tokenizer_ppl = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") # Initialize tokenizer for perplexity
 
     elif args.model in ["bigscience/bloom-560m", "bigscience/bloom-1b1","bigscience/bloom-3b", "bigscience/bloom-7b1"]:
         model = BloomForCausalLM.from_pretrained("./saved_models/cached_models/" + args.model).to(device)
-        tokenizer = BloomTokenizerFast.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left")
-        num_heads, num_layers = model.config.num_attention_heads, model.config.n_layer
-        head_dim, max_length = int(model.config.hidden_size/num_heads), 1024
+        tokenizer_gen = BloomTokenizerFast.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left") # Initialize tokenizer for generation
+        tokenizer_ppl = BloomTokenizerFast.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") # Initialize tokenizer for perplexity
 
     elif args.model in ["EleutherAI/pythia-70m","EleutherAI/pythia-160m","EleutherAI/pythia-410m","EleutherAI/pythia-1b","EleutherAI/pythia-1.4b","EleutherAI/pythia-2.8b","EleutherAI/pythia-6.9b","EleutherAI/pythia-12b"]:
         model = GPTNeoXForCausalLM.from_pretrained("./saved_models/cached_models/" + args.model).to(device)
-        tokenizer = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left")
-        num_heads, num_layers = model.config.num_attention_heads, model.config.num_hidden_layers
-        head_dim, max_length = int(model.config.hidden_size/num_heads), model.config.max_position_embeddings 
+        tokenizer_gen = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left") # Initialize tokenizer for generation
+        tokenizer_ppl = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") # Initialize tokenizer for perplexity
 
+    elif args.model in ["meta-llama/Llama-2-7b"]:
+        model = LlamaForCausalLM.from_pretrained("./saved_models/cached_models/" + args.model, revision="float16",torch_dtype=torch.float16,).to(device)
+        tokenizer_gen = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left") # Initialize tokenizer for generation
+        tokenizer_ppl = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") # Initialize tokenizer for perplexity
         
-    tokenizer.pad_token = tokenizer.eos_token
-    if tokenizer.pad_token is None:
-        tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+    model_configs = json.load(open("./model/models_config.json", "r"))
+    num_heads, num_layers = model_configs[args.model]["num_heads"], model_configs[args.model]["num_layers"] 
+    head_dim, max_length = model_configs[args.model]["head_dim"], model_configs[args.model]["max_length"] 
+
+    tokenizer_gen.pad_token = tokenizer_gen.eos_token
+    if tokenizer_gen.pad_token is None:
+        tokenizer_gen.add_special_tokens({'pad_token': '[PAD]'})
+    splits = ["valid", "test"]
 
     if args.method == None:
-        # this is the case when we are trying to knock out only one head to know the effect pf removing it on fairness and performance
+        # This is the case when we are trying to knock out only one head to know the effect pf removing it on fairness and performance
         idx_pruned_heads = [args.head_knockout]
+        # In this case, we only need the validation dataset
+        splits = ["valid"]
 
     elif args.method == "magnitude_unstructured":
 
@@ -316,7 +319,6 @@ if __name__ == "__main__":
             pruning_method = prune.RandomUnstructured,
             amount = args.pruned_heads_ratio,
         )
-
 
     else:
         # this is the other case when we are systemetically pruning some percentage of the total heads
@@ -401,6 +403,33 @@ if __name__ == "__main__":
                 elif "transformer.h." + str(layer_id) + ".attn.attention.q_proj.weight" in name:
                     para.data =  torch.cat((para.data[0:start,:], para.data[end:,:]), dim = 0)
                 elif "transformer.h." + str(layer_id) + ".attn.attention.out_proj.weight" in name:
+                    para.data =  torch.cat((para.data[:,0:start], para.data[:,end:]), dim = 1)
+
+    elif args.model in ["EleutherAI/gpt-j-6B"]:
+
+        for head in idx_pruned_heads: 
+            num_heads_after_pruning = num_heads
+            layer_id = int(head/num_heads)
+            num_pruned_heads_same_layer = 0
+            for idx_pruned_head_relative in idx_pruned_heads_relative[layer_id]:
+              if idx_pruned_head_relative < head%num_heads:
+                num_pruned_heads_same_layer += 1
+                # the idea is to see if some other heads are pruned in the samer layer before the current head. If so, we shift the current head index by the number of heads that are pruned before it in the same layer.
+                # Also, the number of heads after pruning is reduced by the number of heads that are pruned before it in the same layer.
+
+            head -= num_pruned_heads_same_layer
+            num_heads_after_pruning -= num_pruned_heads_same_layer
+
+            start = head_dim*(head - layer_id*num_heads)
+            end = head_dim*(head - (layer_id*num_heads) + 1)
+            for name, para in model.named_parameters():
+                if "transformer.h." + str(layer_id) + ".attn.k_proj.weight" in name:
+                    para.data =  torch.cat((para.data[0:start,:], para.data[end:,:]), dim = 0)
+                elif "transformer.h." + str(layer_id) + ".attn.v_proj.weight" in name:
+                    para.data =  torch.cat((para.data[0:start,:], para.data[end:,:]), dim = 0)
+                elif "transformer.h." + str(layer_id) + ".attn.q_proj.weight" in name:
+                    para.data =  torch.cat((para.data[0:start,:], para.data[end:,:]), dim = 0)
+                elif "transformer.h." + str(layer_id) + ".attn.out_proj.weight" in name:
                     para.data =  torch.cat((para.data[:,0:start], para.data[:,end:]), dim = 1)
 
 
@@ -488,19 +517,21 @@ if __name__ == "__main__":
                     para.data =  torch.cat((para.data[:,0:start], para.data[:,end:]), dim = 1)
 
 
-    ppl = compute_ppl(model,tokenizer, args.stride, int(max_length/2))  
+    # ppl = {}
+    # ppl["valid"], ppl["test"] = 0,0
+    ppl = compute_ppl(model,tokenizer_ppl, args.stride, int(max_length/2))  
     tox_model = torch.load("./saved_models/unbiased/unbiased.pt")
     tox_model.device = device 
     sentiment_analyzer = SentimentIntensityAnalyzer()   
     model_name = args.model.replace("/", "_")
 
-    for split in ["test","valid"]: 
+    for split in splits:
         output_dir = args.output_dir + "/prompt_" + str(args.prompting) + "_h" + str(args.head_knockout) 
         prompts_file = json.load(open(path_to_prompts + "social_biases_" + split + ".json", "r"))
         output_dir += "_" + split + "/"
         output_dir +=  str(args.method) + "_" + str(args.pruned_heads_ratio) + "_gamma" + str(args.gamma)  + "/"
         Path(output_dir).mkdir(parents=True, exist_ok=True)
-        process_prompts(model_name, model, tokenizer, tox_model, sentiment_analyzer, wandb, ppl[split], args.batch_size, args.max_continuation_length, args.max_prompt_length, args.prompting, output_dir, prompts_file, args.chunk_id, args.chunk_size, args.targeted_holistic_bias, split)
+        process_prompts(model_name, model, tokenizer_gen, tox_model, sentiment_analyzer, wandb, ppl[split], args.batch_size, args.max_continuation_length, args.max_prompt_length, args.prompting, output_dir, prompts_file, args.chunk_id, args.chunk_size, args.targeted_holistic_bias, split)
         
 
 
