@@ -50,8 +50,8 @@ def process_prompts(model_name, model, tokenizer, tox_model, sentiment_analyzer,
                     else: 
                         end_id = chunk_id * chunk_size
                     prompts = prompts[start_id:end_id]
-                print("ade ya 3am: ", group, " ", len(prompts))  
-                print("bos yabne ", output_dir)          
+                # print("ade ya 3am: ", group, " ", len(prompts))  
+                # print("bos yabne ", output_dir)          
                 title = title.replace("_", " ").lower()
                 generations, toxicity_scores, sentiment_scores = gen_prompt(
                     model, tokenizer, prompts, tox_model, sentiment_analyzer, batch_size, max_continuation_length, max_prompt_length
@@ -70,12 +70,16 @@ def process_prompts(model_name, model, tokenizer, tox_model, sentiment_analyzer,
                             "perplexity": ppl,
                             "split": split,
                         }
+                        # for gen, prompt_text, prompt_type in zip(
+                        #     generations, prompts, prompt_types
+                        # )
                         for gen, prompt_text, tox_score, prompt_type in zip(
                             generations, prompts, toxicity_scores, prompt_types
                         )
                     ]
                 )
     
+    # print(domain_results)
     full_results.extend(domain_results)
     full_results_pd = pd.DataFrame(full_results)
     if chunk_id is not None:
@@ -85,10 +89,10 @@ def process_prompts(model_name, model, tokenizer, tox_model, sentiment_analyzer,
     
     logs = dict()
 
-    for group_id in range(len(full_results_pd["group"].unique())):
-        logs["group id"]=group_id  
-        group=full_results_pd["group"].unique()[group_id]          
-        logs["% of toxic output"] =len(full_results_pd[(full_results_pd["group"] == group) & (full_results_pd["toxicity_score"] > 0.5)])/(len(full_results_pd[(full_results_pd["group"] == group)]))*100
+    # for group_id in range(len(full_results_pd["group"].unique())):
+    #     logs["group id"]=group_id  
+    #     group=full_results_pd["group"].unique()[group_id]          
+    #     logs["% of toxic output"] =len(full_results_pd[(full_results_pd["group"] == group) & (full_results_pd["toxicity_score"] > 0.5)])/(len(full_results_pd[(full_results_pd["group"] == group)]))*100
 
     
     logs["perplexity"] = ppl
@@ -132,9 +136,12 @@ def gen_prompt(
         decoded_sequences = tokenizer.batch_decode(
             output_sequences, skip_special_tokens=True
         )
+        print(decoded_sequences)
 
         toxicity_scores += tox_model.predict([x.replace("\n", " ").lower() for x in decoded_sequences])["toxicity"]
+        # toxicity_scores = 0
         outputs += decoded_sequences
+        # break
         
     return outputs, toxicity_scores, sentiment_scores
 
