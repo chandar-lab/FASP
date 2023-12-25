@@ -6,12 +6,15 @@ from argparse import ArgumentParser
 from pathlib import Path
 from model.generation import process_prompts,compute_ppl
 from utils import parameters_to_prune
+#, LlamaForCausalLM, LlamaTokenizerFast
+#transformers_pruning_new
+#transformers_pruning
 from transformers_pruning import AutoTokenizer, BloomTokenizerFast, GPT2Tokenizer
 from transformers_pruning import BloomForCausalLM, GPTNeoForCausalLM, GPTNeoXForCausalLM, OPTForCausalLM, GPTJForCausalLM, AutoModelForCausalLM, AutoModelWithLMHead
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import torch.nn.utils.prune as prune
-
-
+# from detoxify.detoxify import Detoxify
+#_pruning_new
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def parse_args():
@@ -33,15 +36,6 @@ def parse_args():
     parser.add_argument(
         "--model",
         choices=[
-            "bert-base-cased",
-            "bert-base-uncased",
-            "bert-large-cased",
-            "bert-large-uncased",
-            "roberta-base",
-            "roberta-large",
-            "distilroberta-base",
-            "distilbert-base-cased",
-            "distilbert-base-uncased",
             "gpt2",
             "gpt2-medium",
             "gpt2-large",
@@ -67,7 +61,6 @@ def parse_args():
             "EleutherAI/pythia-2.8b",
             "EleutherAI/pythia-6.9b",
             "EleutherAI/pythia-12b",     
-            "EleutherAI/gpt-j-6B",
             "meta-llama/Llama-2-7b",   
             "meta-llama/Llama-2-7b-chat-hf",    
         ],
@@ -87,6 +80,7 @@ def parse_args():
             "FASP",
             "bias_only",
             "ppl_only",
+            "bias_ppl",
             None,
         ],
         default=None,
@@ -103,7 +97,13 @@ def parse_args():
         type=float,
         default=0.5,
         help="The hyperparameter controling the percentage of examples that are considered important for performance",
-    )            
+    )     
+    parser.add_argument(
+        "--beta",
+        type=float,
+        default=0.5,
+        help="The hyperparameter controling the trade-off between the importance of heads for performance and fairness",
+    )        
     parser.add_argument(
         "--prompting",
         choices=[
@@ -223,8 +223,35 @@ def parse_args():
         default=False,
         help="Whether or not to use wandb to visualize the results",
     )
-              
-                  
+
+    parser.add_argument(
+        "--attn_scale",
+        type=float,
+        default=None,
+        help="Scaling coefficient to be multiplied with the attention weights.",
+    )
+    parser.add_argument(
+        "--intraprocessing_method",
+        choices=[
+            "temperature_scaling",
+            "random_perturbation",
+            None,
+        ],
+        default=None,
+        help="Type of intraprocessing debiasing method applied.",
+    )
+    parser.add_argument(
+        "--random_perturbation_mean",
+        type=float,
+        default=0.1,
+        help="The mean of the noise in the random perturbation, as the original paper https://proceedings.neurips.cc/paper/2020/file/1d8d70dddf147d2d92a634817f01b239-Paper.pdf",
+    )
+    parser.add_argument(
+        "--random_perturbation_std",
+        type=float,
+        default=0.01,
+        help="The standard deviation of the noise in the random perturbation, as the original paper https://proceedings.neurips.cc/paper/2020/file/1d8d70dddf147d2d92a634817f01b239-Paper.pdf",
+    )                         
     return parser.parse_args()
 
 
@@ -268,30 +295,26 @@ if __name__ == "__main__":
     elif args.model in ["EleutherAI/pythia-70m","EleutherAI/pythia-160m","EleutherAI/pythia-410m","EleutherAI/pythia-1b","EleutherAI/pythia-1.4b","EleutherAI/pythia-2.8b","EleutherAI/pythia-6.9b","EleutherAI/pythia-12b"]:
         model = GPTNeoXForCausalLM.from_pretrained("./saved_models/cached_models/" + args.model).to(device)
 
-    elif args.model in ["meta-llama/Llama-2-7b"]:
-        model = LlamaForCausalLM.from_pretrained("./saved_models/cached_models/" + args.model, revision="float16",torch_dtype=torch.float16,).to(device)
+    elif args.model in ["meta-llama/Llama-2-7b-chat-hf"]:
+        model = LlamaForCausalLM.from_pretrained("./saved_models/cached_models/" + args.model, revision="float16",torch_dtype=torch.float16,).bfloat16().to(device)
        
-
     if args.model in ["EleutherAI/gpt-neo-125M", "EleutherAI/gpt-neo-1.3B", "EleutherAI/gpt-neo-2.7B"]:
-        tokenizer_gen = GPT2Tokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left") # Initialize tokenizer for generation
-        tokenizer_ppl = GPT2Tokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") # Initialize tokenizer for perplexity
+        tokenizer = GPT2Tokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left") # Initialize tokenizer for generation to the left
     
     elif args.model in ["bigscience/bloom-560m", "bigscience/bloom-1b1","bigscience/bloom-3b", "bigscience/bloom-7b1"]:
-        tokenizer_gen = BloomTokenizerFast.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left") 
-        tokenizer_ppl = BloomTokenizerFast.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") 
+        tokenizer = BloomTokenizerFast.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left") 
 
     else:
-        tokenizer_gen = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left")
-        tokenizer_ppl = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") 
+        tokenizer = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left")
 
 
     model_configs = json.load(open("./model/models_config.json", "r"))
     num_heads, num_layers = model_configs[args.model]["num_heads"], model_configs[args.model]["num_layers"] 
     head_dim, max_length = model_configs[args.model]["head_dim"], model_configs[args.model]["max_length"] 
 
-    tokenizer_gen.pad_token = tokenizer_gen.eos_token
-    if tokenizer_gen.pad_token is None:
-        tokenizer_gen.add_special_tokens({'pad_token': '[PAD]'})
+    tokenizer.pad_token = tokenizer.eos_token
+    if tokenizer.pad_token is None:
+        tokenizer.add_special_tokens({'pad_token': '[PAD]'})
     splits = ["valid", "test"]
 
     if args.method == None:
@@ -348,6 +371,17 @@ if __name__ == "__main__":
                 idx_pruned_heads = [index for index, item in enumerate(ours_scores) if item <= threshold]
 
 
+            elif args.method == "bias_ppl":
+                if args.use_gender_scores:
+                    ours_scores = head_contributions[args.model]["cont_to_gender_and_sex" + "_bias"]
+                else:
+                    ours_scores = head_contributions[args.model]["cont_to_" + args.targeted_holistic_bias + "_bias"]
+
+                ppl_scores = head_contributions[args.model]["cont_to_ppl"]
+                bias_ppl_scores = args.beta * np.array(ours_scores) + (1-args.beta) * np.array(ppl_scores)
+                threshold = np.sort(bias_ppl_scores)[num_pruned_heads-1]
+                idx_pruned_heads = [index for index, item in enumerate(bias_ppl_scores) if item <= threshold]
+
             elif args.method == "FASP":
                 if args.use_gender_scores:
                     ours_scores = head_contributions[args.model]["cont_to_gender_and_sex" + "_bias"]
@@ -375,7 +409,6 @@ if __name__ == "__main__":
     if args.model in ["distilroberta-base", "distilbert-base-cased","gpt2", "gpt2-medium", "gpt2-large", "distilgpt2",  "gpt2-xl","bert-base-cased",  "bert-large-cased", "roberta-base","roberta-large"]:
         model.prune_heads(idx_pruned_heads_relative)
 
-
     elif args.model in ["EleutherAI/gpt-neo-125M", "EleutherAI/gpt-neo-1.3B", "EleutherAI/gpt-neo-2.7B"]:
 
         for head in idx_pruned_heads: 
@@ -402,6 +435,7 @@ if __name__ == "__main__":
                     para.data =  torch.cat((para.data[0:start,:], para.data[end:,:]), dim = 0)
                 elif "transformer.h." + str(layer_id) + ".attn.attention.out_proj.weight" in name:
                     para.data =  torch.cat((para.data[:,0:start], para.data[:,end:]), dim = 1)
+
 
     elif args.model in ["EleutherAI/gpt-j-6B"]:
 
@@ -431,7 +465,7 @@ if __name__ == "__main__":
                     para.data =  torch.cat((para.data[:,0:start], para.data[:,end:]), dim = 1)
 
 
-    elif args.model in ["facebook/opt-350m", "facebook/opt-1.3b", "facebook/opt-2.7b", "facebook/opt-6.7b"]:
+    elif args.model in ["meta-llama/Llama-2-7b-chat-hf"]:
 
         for head in idx_pruned_heads: 
             num_heads_after_pruning = num_heads
@@ -440,6 +474,8 @@ if __name__ == "__main__":
             for idx_pruned_head_relative in idx_pruned_heads_relative[layer_id]:
               if idx_pruned_head_relative < head%num_heads:
                 num_pruned_heads_same_layer += 1
+                # the idea is to see if some other heads are pruned in the samer layer before the current head. If so, we shift the current head index by the number of heads that are pruned before it in the same layer.
+                # Also, the number of heads after pruning is reduced by the number of heads that are pruned before it in the same layer.
 
             head -= num_pruned_heads_same_layer
             num_heads_after_pruning -= num_pruned_heads_same_layer
@@ -447,89 +483,39 @@ if __name__ == "__main__":
             start = head_dim*(head - layer_id*num_heads)
             end = head_dim*(head - (layer_id*num_heads) + 1)
             for name, para in model.named_parameters():
-                if "model.decoder.layers." + str(layer_id) + ".self_attn.k_proj.weight" in name:
+                if "model.layers." + str(layer_id) + ".self_attn.q_proj.weight" in name:
                     para.data =  torch.cat((para.data[0:start,:], para.data[end:,:]), dim = 0)
-
-                elif "model.decoder.layers." + str(layer_id) + ".self_attn.k_proj.bias" in name:
-                    para.data =  torch.cat((para.data[0:start], para.data[end:]))         
-
-                elif "model.decoder.layers." + str(layer_id) + ".self_attn.v_proj.weight" in name:
+                elif "model.layers." + str(layer_id) + ".self_attn.k_proj.weight" in name:
                     para.data =  torch.cat((para.data[0:start,:], para.data[end:,:]), dim = 0)
-
-                elif "model.decoder.layers." + str(layer_id) + ".self_attn.v_proj.bias" in name:
-                    para.data =  torch.cat((para.data[0:start], para.data[end:]))         
-
-                elif "model.decoder.layers." + str(layer_id) + ".self_attn.q_proj.weight" in name:
+                elif "model.layers." + str(layer_id) + ".self_attn.v_proj.weight" in name:
                     para.data =  torch.cat((para.data[0:start,:], para.data[end:,:]), dim = 0)
-
-                elif "model.decoder.layers." + str(layer_id) + ".self_attn.q_proj.bias" in name:
-                    para.data =  torch.cat((para.data[0:start], para.data[end:]))   
-                          
-                elif "model.decoder.layers." + str(layer_id) + ".self_attn.out_proj.weight" in name:
-                    para.data =  torch.cat((para.data[:,0:start], para.data[:,end:]), dim = 1)
-
-    elif args.model in ["bigscience/bloom-560m", "bigscience/bloom-1b1","bigscience/bloom-3b", "bigscience/bloom-7b1"]:
-        for head in idx_pruned_heads: 
-            num_heads_after_pruning = num_heads
-            layer_id = int(head/num_heads)
-            num_pruned_heads_same_layer = 0
-            for idx_pruned_head_relative in idx_pruned_heads_relative[layer_id]:
-              if idx_pruned_head_relative < head%num_heads:
-                num_pruned_heads_same_layer += 1
-
-            head -= num_pruned_heads_same_layer
-            num_heads_after_pruning -= num_pruned_heads_same_layer
-            start = head_dim*(head - layer_id*num_heads)
-            end = head_dim*(head - (layer_id*num_heads) + 1)
-            for name, para in model.named_parameters():
-                if "transformer.h." + str(layer_id) + ".self_attention.query_key_value.weight" in name:
-                    para.data =  torch.cat((para.data[0:start,:], para.data[end:start + head_dim*num_heads_after_pruning,:],para.data[end + head_dim*num_heads_after_pruning:start + 2*head_dim*num_heads_after_pruning,:], para.data[end + 2*head_dim*num_heads_after_pruning: ,:]), dim = 0)
-                
-                elif "transformer.h" + str(layer_id) + ".self_attention.query_key_value.bias" in name:
-                    para.data =  torch.cat((para.data[0:start], para.data[end:start + head_dim*num_heads_after_pruning],para.data[end + head_dim*num_heads_after_pruning:start + 2*head_dim*num_heads_after_pruning], para.data[end + 2*head_dim*num_heads_after_pruning: ]))         
-                
-                elif "transformer.h." + str(layer_id) + ".self_attention.dense.weight" in name:
-                    para.data =  torch.cat((para.data[:,0:start], para.data[:,end:start + head_dim*num_heads_after_pruning],para.data[:,end + head_dim*num_heads_after_pruning:start + 2*head_dim*num_heads_after_pruning], para.data[:,end + 2*head_dim*num_heads_after_pruning:]), dim = 1)
-
-    elif args.model in ["EleutherAI/pythia-70m","EleutherAI/pythia-160m","EleutherAI/pythia-410m","EleutherAI/pythia-1b","EleutherAI/pythia-1.4b","EleutherAI/pythia-2.8b","EleutherAI/pythia-6.9b","EleutherAI/pythia-12b"]:
-
-        for head in idx_pruned_heads: 
-            num_heads_after_pruning = num_heads
-            layer_id = int(head/num_heads)
-            num_pruned_heads_same_layer = 0
-            for idx_pruned_head_relative in idx_pruned_heads_relative[layer_id]:
-              if idx_pruned_head_relative < head%num_heads:
-                num_pruned_heads_same_layer += 1
-
-            head -= num_pruned_heads_same_layer
-            num_heads_after_pruning -= num_pruned_heads_same_layer
-
-            start = head_dim*(head - layer_id*num_heads)
-            end = head_dim*(head - (layer_id*num_heads) + 1)
-            for name, para in model.named_parameters():
-                if "gpt_neox.layers." + str(layer_id) + ".attention.query_key_value.weight" in name:
-                    para.data =  torch.cat((para.data[0:start,:], para.data[end:start + head_dim*num_heads_after_pruning,:],para.data[end + head_dim*num_heads_after_pruning:start + 2*head_dim*num_heads_after_pruning,:], para.data[end + 2*head_dim*num_heads_after_pruning:,:]), dim = 0)
-                elif "gpt_neox.layers." + str(layer_id) + ".attention.query_key_value.bias" in name:
-                    para.data =  torch.cat((para.data[0:start], para.data[end:start + head_dim*num_heads_after_pruning],para.data[end + head_dim*num_heads_after_pruning:start + 2*head_dim*num_heads_after_pruning], para.data[end + 2*head_dim*num_heads_after_pruning: ]))         
-                elif "gpt_neox.layers." + str(layer_id) + ".attention.dense.weight" in name:
+                elif "model.layers." + str(layer_id) + ".self_attn.o_proj.weight" in name:
                     para.data =  torch.cat((para.data[:,0:start], para.data[:,end:]), dim = 1)
 
 
-    # ppl = {}
-    # ppl["valid"], ppl["test"] = 0,0
-    ppl = compute_ppl(model,tokenizer_ppl, args.stride, int(max_length/2))  
+    if args.intraprocessing_method == "random_perturbation":
+            for name, para in model.named_parameters():
+                para.data *= (
+                    torch.randn_like(para) * args.random_perturbation_std
+                    + args.random_perturbation_mean
+                )
+
+
+    ppl = compute_ppl(model,tokenizer, args.stride, int(max_length/2))  
     tox_model = torch.load("./saved_models/unbiased/unbiased.pt")
     tox_model.device = device 
-    sentiment_analyzer = SentimentIntensityAnalyzer()   
+    # tox_model = None
+    
+    sentiment_analyzer = SentimentIntensityAnalyzer()    
     model_name = args.model.replace("/", "_")
 
     for split in splits:
         output_dir = args.output_dir + "/prompt_" + str(args.prompting) + "_h" + str(args.head_knockout) 
         prompts_file = json.load(open(path_to_prompts + "social_biases_" + split + ".json", "r"))
         output_dir += "_" + split + "/"
-        output_dir +=  str(args.method) + "_" + str(args.pruned_heads_ratio) + "_gamma" + str(args.gamma)  + "/"
+        output_dir +=  str(args.method) + "_" + str(args.pruned_heads_ratio) + "_gamma" + str(args.gamma) + "_beta" + str(args.beta) + "_attn_scale" + str(args.attn_scale) + "_rnd" + str(args.intraprocessing_method == "random_perturbation")  + "/"
         Path(output_dir).mkdir(parents=True, exist_ok=True)
-        process_prompts(model_name, model, tokenizer_gen, tox_model, sentiment_analyzer, wandb, ppl[split], args.batch_size, args.max_continuation_length, args.max_prompt_length, args.prompting, output_dir, prompts_file, args.chunk_id, args.chunk_size, args.targeted_holistic_bias, split)
+        process_prompts(model_name, model, tokenizer, tox_model, sentiment_analyzer, wandb, ppl[split], args.batch_size, args.max_continuation_length, args.max_prompt_length, args.prompting, output_dir, prompts_file, args.chunk_id, args.chunk_size, args.targeted_holistic_bias, split)
         
 
 
