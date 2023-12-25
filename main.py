@@ -36,6 +36,15 @@ def parse_args():
     parser.add_argument(
         "--model",
         choices=[
+            "bert-base-cased",
+            "bert-base-uncased",
+            "bert-large-cased",
+            "bert-large-uncased",
+            "roberta-base",
+            "roberta-large",
+            "distilroberta-base",
+            "distilbert-base-cased",
+            "distilbert-base-uncased",
             "gpt2",
             "gpt2-medium",
             "gpt2-large",
@@ -61,6 +70,7 @@ def parse_args():
             "EleutherAI/pythia-2.8b",
             "EleutherAI/pythia-6.9b",
             "EleutherAI/pythia-12b",     
+            "EleutherAI/gpt-j-6B",
             "meta-llama/Llama-2-7b",   
             "meta-llama/Llama-2-7b-chat-hf",    
         ],
@@ -299,22 +309,28 @@ if __name__ == "__main__":
         model = LlamaForCausalLM.from_pretrained("./saved_models/cached_models/" + args.model, revision="float16",torch_dtype=torch.float16,).bfloat16().to(device)
        
     if args.model in ["EleutherAI/gpt-neo-125M", "EleutherAI/gpt-neo-1.3B", "EleutherAI/gpt-neo-2.7B"]:
-        tokenizer = GPT2Tokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left") # Initialize tokenizer for generation to the left
+        tokenizer_gen = GPT2Tokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left") # Initialize tokenizer for generation to the left
+        tokenizer_ppl = GPT2Tokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") # Initialize tokenizer for perplexity to the right
     
     elif args.model in ["bigscience/bloom-560m", "bigscience/bloom-1b1","bigscience/bloom-3b", "bigscience/bloom-7b1"]:
-        tokenizer = BloomTokenizerFast.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left") 
+        tokenizer_gen = BloomTokenizerFast.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left") 
+        tokenizer_ppl = BloomTokenizerFast.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") 
 
     else:
-        tokenizer = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left")
+        tokenizer_gen = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="left")
+        tokenizer_ppl = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + args.model, padding_side="right") 
+
+    # for name, para in model.named_parameters():
+    #     print(name, para.shape)
 
 
     model_configs = json.load(open("./model/models_config.json", "r"))
     num_heads, num_layers = model_configs[args.model]["num_heads"], model_configs[args.model]["num_layers"] 
     head_dim, max_length = model_configs[args.model]["head_dim"], model_configs[args.model]["max_length"] 
 
-    tokenizer.pad_token = tokenizer.eos_token
-    if tokenizer.pad_token is None:
-        tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+    tokenizer_gen.pad_token = tokenizer_gen.eos_token
+    if tokenizer_gen.pad_token is None:
+        tokenizer_gen.add_special_tokens({'pad_token': '[PAD]'})
     splits = ["valid", "test"]
 
     if args.method == None:
@@ -409,6 +425,11 @@ if __name__ == "__main__":
     if args.model in ["distilroberta-base", "distilbert-base-cased","gpt2", "gpt2-medium", "gpt2-large", "distilgpt2",  "gpt2-xl","bert-base-cased",  "bert-large-cased", "roberta-base","roberta-large"]:
         model.prune_heads(idx_pruned_heads_relative)
 
+        if args.intraprocessing_method == "temperature_scaling":
+            for name, para in model.named_parameters():
+                if ".attn.c_attn.weight" in name:
+                    para.data *= args.attn_scale 
+
     elif args.model in ["EleutherAI/gpt-neo-125M", "EleutherAI/gpt-neo-1.3B", "EleutherAI/gpt-neo-2.7B"]:
 
         for head in idx_pruned_heads: 
@@ -435,6 +456,12 @@ if __name__ == "__main__":
                     para.data =  torch.cat((para.data[0:start,:], para.data[end:,:]), dim = 0)
                 elif "transformer.h." + str(layer_id) + ".attn.attention.out_proj.weight" in name:
                     para.data =  torch.cat((para.data[:,0:start], para.data[:,end:]), dim = 1)
+
+
+        if args.intraprocessing_method == "temperature_scaling":
+            for name, para in model.named_parameters():
+                if ".attn.attention.q_proj.weight" in name:
+                    para.data *= args.attn_scale 
 
 
     elif args.model in ["EleutherAI/gpt-j-6B"]:
@@ -493,6 +520,92 @@ if __name__ == "__main__":
                     para.data =  torch.cat((para.data[:,0:start], para.data[:,end:]), dim = 1)
 
 
+    elif args.model in ["facebook/opt-350m", "facebook/opt-1.3b", "facebook/opt-2.7b", "facebook/opt-6.7b"]:
+
+        for head in idx_pruned_heads: 
+            num_heads_after_pruning = num_heads
+            layer_id = int(head/num_heads)
+            num_pruned_heads_same_layer = 0
+            for idx_pruned_head_relative in idx_pruned_heads_relative[layer_id]:
+              if idx_pruned_head_relative < head%num_heads:
+                num_pruned_heads_same_layer += 1
+
+            head -= num_pruned_heads_same_layer
+            num_heads_after_pruning -= num_pruned_heads_same_layer
+
+            start = head_dim*(head - layer_id*num_heads)
+            end = head_dim*(head - (layer_id*num_heads) + 1)
+            for name, para in model.named_parameters():
+                if "model.decoder.layers." + str(layer_id) + ".self_attn.k_proj.weight" in name:
+                    para.data =  torch.cat((para.data[0:start,:], para.data[end:,:]), dim = 0)
+
+                elif "model.decoder.layers." + str(layer_id) + ".self_attn.k_proj.bias" in name:
+                    para.data =  torch.cat((para.data[0:start], para.data[end:]))         
+
+                elif "model.decoder.layers." + str(layer_id) + ".self_attn.v_proj.weight" in name:
+                    para.data =  torch.cat((para.data[0:start,:], para.data[end:,:]), dim = 0)
+
+                elif "model.decoder.layers." + str(layer_id) + ".self_attn.v_proj.bias" in name:
+                    para.data =  torch.cat((para.data[0:start], para.data[end:]))         
+
+                elif "model.decoder.layers." + str(layer_id) + ".self_attn.q_proj.weight" in name:
+                    para.data =  torch.cat((para.data[0:start,:], para.data[end:,:]), dim = 0)
+
+                elif "model.decoder.layers." + str(layer_id) + ".self_attn.q_proj.bias" in name:
+                    para.data =  torch.cat((para.data[0:start], para.data[end:]))   
+                          
+                elif "model.decoder.layers." + str(layer_id) + ".self_attn.out_proj.weight" in name:
+                    para.data =  torch.cat((para.data[:,0:start], para.data[:,end:]), dim = 1)
+
+    elif args.model in ["bigscience/bloom-560m", "bigscience/bloom-1b1","bigscience/bloom-3b", "bigscience/bloom-7b1"]:
+        for head in idx_pruned_heads: 
+            num_heads_after_pruning = num_heads
+            layer_id = int(head/num_heads)
+            num_pruned_heads_same_layer = 0
+            for idx_pruned_head_relative in idx_pruned_heads_relative[layer_id]:
+              if idx_pruned_head_relative < head%num_heads:
+                num_pruned_heads_same_layer += 1
+
+            head -= num_pruned_heads_same_layer
+            num_heads_after_pruning -= num_pruned_heads_same_layer
+            start = head_dim*(head - layer_id*num_heads)
+            end = head_dim*(head - (layer_id*num_heads) + 1)
+            for name, para in model.named_parameters():
+                if "transformer.h." + str(layer_id) + ".self_attention.query_key_value.weight" in name:
+                    para.data =  torch.cat((para.data[0:start,:], para.data[end:start + head_dim*num_heads_after_pruning,:],para.data[end + head_dim*num_heads_after_pruning:start + 2*head_dim*num_heads_after_pruning,:], para.data[end + 2*head_dim*num_heads_after_pruning: ,:]), dim = 0)
+                
+                elif "transformer.h" + str(layer_id) + ".self_attention.query_key_value.bias" in name:
+                    para.data =  torch.cat((para.data[0:start], para.data[end:start + head_dim*num_heads_after_pruning],para.data[end + head_dim*num_heads_after_pruning:start + 2*head_dim*num_heads_after_pruning], para.data[end + 2*head_dim*num_heads_after_pruning: ]))         
+                
+                elif "transformer.h." + str(layer_id) + ".self_attention.dense.weight" in name:
+                    para.data =  torch.cat((para.data[:,0:start], para.data[:,end:start + head_dim*num_heads_after_pruning],para.data[:,end + head_dim*num_heads_after_pruning:start + 2*head_dim*num_heads_after_pruning], para.data[:,end + 2*head_dim*num_heads_after_pruning:]), dim = 1)
+
+    elif args.model in ["EleutherAI/pythia-70m","EleutherAI/pythia-160m","EleutherAI/pythia-410m","EleutherAI/pythia-1b","EleutherAI/pythia-1.4b","EleutherAI/pythia-2.8b","EleutherAI/pythia-6.9b","EleutherAI/pythia-12b"]:
+
+        for head in idx_pruned_heads: 
+            num_heads_after_pruning = num_heads
+            layer_id = int(head/num_heads)
+            num_pruned_heads_same_layer = 0
+            for idx_pruned_head_relative in idx_pruned_heads_relative[layer_id]:
+              if idx_pruned_head_relative < head%num_heads:
+                num_pruned_heads_same_layer += 1
+
+            head -= num_pruned_heads_same_layer
+            num_heads_after_pruning -= num_pruned_heads_same_layer
+
+            start = head_dim*(head - layer_id*num_heads)
+            end = head_dim*(head - (layer_id*num_heads) + 1)
+            for name, para in model.named_parameters():
+                if "gpt_neox.layers." + str(layer_id) + ".attention.query_key_value.weight" in name:
+                    para.data =  torch.cat((para.data[0:start,:], para.data[end:start + head_dim*num_heads_after_pruning,:],para.data[end + head_dim*num_heads_after_pruning:start + 2*head_dim*num_heads_after_pruning,:], para.data[end + 2*head_dim*num_heads_after_pruning:,:]), dim = 0)
+                elif "gpt_neox.layers." + str(layer_id) + ".attention.query_key_value.bias" in name:
+                    para.data =  torch.cat((para.data[0:start], para.data[end:start + head_dim*num_heads_after_pruning],para.data[end + head_dim*num_heads_after_pruning:start + 2*head_dim*num_heads_after_pruning], para.data[end + 2*head_dim*num_heads_after_pruning: ]))                       
+                elif "gpt_neox.layers." + str(layer_id) + ".attention.dense.weight" in name:
+                    para.data =  torch.cat((para.data[:,0:start], para.data[:,end:]), dim = 1)
+
+
+
+
     if args.intraprocessing_method == "random_perturbation":
             for name, para in model.named_parameters():
                 para.data *= (
@@ -501,7 +614,9 @@ if __name__ == "__main__":
                 )
 
 
-    ppl = compute_ppl(model,tokenizer, args.stride, int(max_length/2))  
+    # ppl = {}
+    # ppl["valid"], ppl["test"] = 0,0
+    ppl = compute_ppl(model,tokenizer_gen, args.stride, int(max_length/2))  
     tox_model = torch.load("./saved_models/unbiased/unbiased.pt")
     tox_model.device = device 
     # tox_model = None
@@ -515,7 +630,7 @@ if __name__ == "__main__":
         output_dir += "_" + split + "/"
         output_dir +=  str(args.method) + "_" + str(args.pruned_heads_ratio) + "_gamma" + str(args.gamma) + "_beta" + str(args.beta) + "_attn_scale" + str(args.attn_scale) + "_rnd" + str(args.intraprocessing_method == "random_perturbation")  + "/"
         Path(output_dir).mkdir(parents=True, exist_ok=True)
-        process_prompts(model_name, model, tokenizer, tox_model, sentiment_analyzer, wandb, ppl[split], args.batch_size, args.max_continuation_length, args.max_prompt_length, args.prompting, output_dir, prompts_file, args.chunk_id, args.chunk_size, args.targeted_holistic_bias, split)
+        process_prompts(model_name, model, tokenizer_gen, tox_model, sentiment_analyzer, wandb, ppl[split], args.batch_size, args.max_continuation_length, args.max_prompt_length, args.prompting, output_dir, prompts_file, args.chunk_id, args.chunk_size, args.targeted_holistic_bias, split)
         
 
 
