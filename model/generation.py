@@ -5,8 +5,8 @@ import pandas as pd
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def process_prompts(model_name, model, tokenizer, tox_model, sentiment_analyzer, wandb, ppl, batch_size, 
-                    max_continuation_length, max_prompt_length, prompting, output_dir, prompts_file, chunk_id=None, chunk_size = None, targeted_group=None, split=None):           
+def process_prompts(model_name, model, tokenizer, tox_model, ppl, batch_size, 
+                    max_continuation_length, max_prompt_length, output_dir, prompts_file, targeted_group=None, split=None):           
     """
     Collect the model continuations, toxicity, and sentiment for different groups of prompts.
 
@@ -15,17 +15,12 @@ def process_prompts(model_name, model, tokenizer, tox_model, sentiment_analyzer,
         model: transformers.PreTrainedModel
         tokenizer: transformers.PreTrainedTokenizer
         tox_model: transformers.PreTrainedModel
-        sentiment_analyzer: transformers.PreTrainedModel
-        wandb: bool
         ppl: float
         batch_size: int
         max_continuation_length: int
         max_prompt_length: int
-        prompting: str
         output_dir: str
         prompts_file: dict[str:dict[str:list[str]]]
-        chunk_id: int
-        chunk_size: int
         targeted_group: str
         split: str
 
@@ -39,22 +34,10 @@ def process_prompts(model_name, model, tokenizer, tox_model, sentiment_analyzer,
         for title, prompts in group_prompts.items():
                 
                 if group != targeted_group:
-                    continue
-                if chunk_id is not None:
-                    if split == "test":
-                        chunk_size = int(chunk_size*4)
-                        # validation set is 1/4 of the size of the test set
-                    start_id = (chunk_id-1) * chunk_size
-                    if len(prompts)  < chunk_id * chunk_size:
-                        end_id = len(prompts)
-                    else: 
-                        end_id = chunk_id * chunk_size
-                    prompts = prompts[start_id:end_id]
-                # print("ade ya 3am: ", group, " ", len(prompts))  
-                # print("bos yabne ", output_dir)          
+                    continue      
                 title = title.replace("_", " ").lower()
-                generations, toxicity_scores, sentiment_scores = gen_prompt(
-                    model, tokenizer, prompts, tox_model, sentiment_analyzer, batch_size, max_continuation_length, max_prompt_length
+                generations, toxicity_scores = gen_prompt(
+                    model, tokenizer, prompts, tox_model, batch_size, max_continuation_length, max_prompt_length
                 )
                 prompt_types=["original"]*len(prompts)
                                         
@@ -70,36 +53,18 @@ def process_prompts(model_name, model, tokenizer, tox_model, sentiment_analyzer,
                             "perplexity": ppl,
                             "split": split,
                         }
-                        # for gen, prompt_text, prompt_type in zip(
-                        #     generations, prompts, prompt_types
-                        # )
                         for gen, prompt_text, tox_score, prompt_type in zip(
                             generations, prompts, toxicity_scores, prompt_types
                         )
                     ]
                 )
     
-    # print(domain_results)
     full_results.extend(domain_results)
     full_results_pd = pd.DataFrame(full_results)
-    if chunk_id is not None:
-        full_results_pd.to_csv(output_dir + model_name + "_" + targeted_group + "_" + str(chunk_id) + ".csv",index=False,)
-    else:
-        full_results_pd.to_csv(output_dir + model_name + "_" + targeted_group + ".csv",index=False,)
-    
-    logs = dict()
-
-    # for group_id in range(len(full_results_pd["group"].unique())):
-    #     logs["group id"]=group_id  
-    #     group=full_results_pd["group"].unique()[group_id]          
-    #     logs["% of toxic output"] =len(full_results_pd[(full_results_pd["group"] == group) & (full_results_pd["toxicity_score"] > 0.5)])/(len(full_results_pd[(full_results_pd["group"] == group)]))*100
-
-    
-    logs["perplexity"] = ppl
-    wandb.log(logs)
+    full_results_pd.to_csv(output_dir + model_name + "_" + targeted_group + ".csv",index=False,)
     
 def gen_prompt(
-    model, tokenizer, data, tox_model, sentiment_analyzer, batch_size, max_continuation_length, max_prompt_length
+    model, tokenizer, data, tox_model, batch_size, max_continuation_length, max_prompt_length
 ):
     """
     Given some prompts, generate model continuation and measure both toxicity and sentiment scores.
@@ -109,7 +74,6 @@ def gen_prompt(
         tokenizer: transformers.PreTrainedTokenizer
         data: list[str]
         tox_model: transformers.PreTrainedModel
-        sentiment_analyzer: transformers.PreTrainedModel
         batch_size: int
         max_continuation_length: int
         max_prompt_length: int
@@ -117,9 +81,8 @@ def gen_prompt(
     Returns:
         outputs: list[str]
         toxicity_scores: list[float]
-        sentiment_scores: list[float]
     """
-    outputs, toxicity_scores, sentiment_scores = [], [], []
+    outputs, toxicity_scores = [], []
 
     for idx in tqdm(range(0, len(data), batch_size)):
 
@@ -137,13 +100,10 @@ def gen_prompt(
             output_sequences, skip_special_tokens=True
         )
         print(decoded_sequences)
-
         toxicity_scores += tox_model.predict([x.replace("\n", " ").lower() for x in decoded_sequences])["toxicity"]
-        # toxicity_scores = 0
         outputs += decoded_sequences
-        # break
         
-    return outputs, toxicity_scores, sentiment_scores
+    return outputs, toxicity_scores
 
 
 def compute_ppl(model, tokenizer, stride, max_position_embeddings):
@@ -167,7 +127,6 @@ def compute_ppl(model, tokenizer, stride, max_position_embeddings):
                 # remove linebreak from a current name
                 # linebreak is the last character of each line
                 x = line
-
                 # add current item to the list
                 names.append(x)
 
