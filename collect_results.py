@@ -25,7 +25,7 @@ def parse_args():
         choices=[
             "abdel1", "olewicki"
         ],
-        default="olewicki",
+        default="abdel1",
         help="The Compute Canada account that we work on",
     )
 
@@ -100,10 +100,9 @@ if __name__ == "__main__":
 #,"nationality", "race_ethnicity", "religion", "sexual_orientation"
     groups = ["gender_and_sex"]
     seeds = ["1", "2", "3"]
-    attn_scales = ["0.7", "0.8", "0.9", "1.0", "1.1", "1.2", "1.3", "None"]
-    random_perturbations = ["True", "False"]
+    # attn_scales = ["0.7", "0.8", "0.9", "1.0", "1.1", "1.2", "1.3", "None"]
+    # random_perturbations = ["True", "False"]
 #, "test"
-    beta, attn_scale, random_perturbation = "None", "None", "None"
     for model_name in args.model_list:
         for split in ["valid", "test"]:
             for method in methods:
@@ -136,7 +135,7 @@ if __name__ == "__main__":
                                                         + model_name.replace("/", "_")
                                                         + "_"
                                                         + str(group)
-                                                        + "_fixed.csv"
+                                                        + ".csv"
                                                     )     
                                                     print(file_name)  
                                                     
@@ -145,7 +144,8 @@ if __name__ == "__main__":
                                                         if os.stat(file_name).st_size < 10000:
                                                             continue
                                                         #, on_bad_lines='skip', header = None, delimiter="\t", encoding='utf-8'
-                                                        df = pd.read_csv(file_name,lineterminator='\n', error_bad_lines=False)  
+                                                        df = pd.read_csv(file_name,lineterminator='\n', error_bad_lines=False)
+                                                        df = df[df["title"]=="prompts"]
                                                         if split == "valid":
                                                             groups_split = groups_valid
                                                         elif split == "test":
@@ -161,15 +161,15 @@ if __name__ == "__main__":
 
                                                         for group in df["axis"].unique():
                                                             bias = 0
-                                                            toxicity_group = df["toxicity_score_2"][df["axis"] == group].mean()
+                                                            toxicity_group = df["toxicity_score"][df["axis"] == group].mean()
                                                             for subgroup in df["bucket"].unique():
-                                                                toxicity_subgroup = df["toxicity_score_2"][(df["axis"] == group) & (df["bucket"] == subgroup)].mean()
+                                                                toxicity_subgroup = df["toxicity_score"][(df["axis"] == group) & (df["bucket"] == subgroup)].mean()
                                                                 bias += abs(toxicity_group-toxicity_subgroup)
 
                                                             ppl=df["perplexity"].mean()       
-                                                            percent_toxic =len(df[(df["group"] == group) & (df["toxicity_score_2"] > 0.5)])/(len(df[(df["group"] == group)]))*100
-                                                            df_all_seeds = df_all_seeds.append({'Group': group, 'Bias': bias, 'Average toxicity': toxicity_group, 'Model': model_name.replace("/", "_"), 'beta': beta if beta != "None" else None,
-                                                                                                'Prompting': prompting,'% of toxic output': percent_toxic, 'gamma': gamma if gamma != "None" else None,'Attention scale': attn_scale,'Group': group,'Random perturbation': random_perturbation,
+                                                            percent_toxic =len(df[(df["group"] == group) & (df["toxicity_score"] > 0.5)])/(len(df[(df["group"] == group)]))*100
+                                                            df_all_seeds = df_all_seeds.append({'Group': group, 'Bias': bias, 'Average toxicity': toxicity_group, 'Model': model_name.replace("/", "_"),
+                                                                                                'Prompting': prompting,'% of toxic output': percent_toxic, 'gamma': gamma if gamma != "None" else None,'Group': group,
                                                                                                 'Head id': (head_knockout + 1) if head_knockout != "None" else None, 'Method': method, 'Pruning ratio': pruned_heads_ratio,
                                                                                                 'Seed': seed, 'Split': split, 'PPL': ppl}, ignore_index = True)     
 
@@ -179,8 +179,6 @@ if __name__ == "__main__":
         df_all_seeds.to_csv(
             "./output/"
             + str(args.experiment)
-            + "_"
-            + str(model_name.replace("/", "_")) 
             + ".csv",
             index=False,
         ) 
