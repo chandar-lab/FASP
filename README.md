@@ -7,7 +7,7 @@ Welcome to the official repository for the AAAI [paper](https://arxiv.org/pdf/23
 </div>
 
 ## Running the experiments
-Get started with the Colab tutorial, `FASP_AAAI24_reproducibility.ipynb`, which guides you through the process of downloading the models, performing preprocessing steps, and creating the scripts required to run the experiments. 
+Get started with the Colab tutorial, `FASP_AAAI24_reproducibility.ipynb`, which guides you through the process of downloading the models, understanding the preprocessing steps, and creating the scripts required to run the experiments. 
 
 ## Citation
 ```
