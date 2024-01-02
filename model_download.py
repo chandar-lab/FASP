@@ -1,5 +1,5 @@
 import torch
-from transformers import AutoTokenizer, GPT2Tokenizer, LlamaForCausalLM
+from transformers import AutoTokenizer, GPT2Tokenizer
 from transformers import GPTNeoForCausalLM, GPTJForCausalLM, AutoModelWithLMHead
                
 # This file used to download the models from huggingface and save them in the cached_models folder
