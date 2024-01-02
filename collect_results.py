@@ -23,7 +23,7 @@ def parse_args():
     parser.add_argument(
         "--account",
         choices=[
-            "abdel1", "olewicki"
+            "abdel1"
         ],
         default="abdel1",
         help="The Compute Canada account that we work on",
@@ -56,36 +56,6 @@ if __name__ == "__main__":
     num_heads, num_layers = model_configs[args.model_list[0]]["num_heads"], model_configs[args.model_list[0]]["num_layers"] 
     head_dim, max_length = model_configs[args.model_list[0]]["head_dim"], model_configs[args.model_list[0]]["max_length"] 
 
-    # num_heads, num_layers = model_configs[args.model_list[0]]["num_heads"], model_configs[args.model_list[0]]["num_layers"] 
-    # head_dim, max_length = model_configs[args.model_list[0]]["head_dim"], model_configs[args.model_list[0]]["max_length"] 
-
-    # for model_name in args.model_list:
-    #     if model_name in ["gpt2", "gpt2-medium", "gpt2-large", "distilgpt2",  "gpt2-xl"]:
-    #         model = AutoModelWithLMHead.from_pretrained("./saved_models/cached_models/" + model_name).to(device)
-    #         # number of heads per layer, and number of layers
-    #         num_heads, num_layers = model.config.n_head, model.config.n_layer
-
-    #     elif model_name in ["EleutherAI/pythia-70m","EleutherAI/pythia-160m","EleutherAI/pythia-410m"]:
-    #         model = GPTNeoXForCausalLM.from_pretrained("./saved_models/cached_models/" + model_name).to(device)
-    #         num_heads, num_layers = model.config.num_attention_heads, model.config.num_hidden_layers
-
-    #     elif model_name in ["EleutherAI/gpt-neo-125M", "EleutherAI/gpt-neo-1.3B", "EleutherAI/gpt-neo-2.7B"]:
-    #         model = GPTNeoForCausalLM.from_pretrained("./saved_models/cached_models/" + model_name).to(device)
-    #         num_heads, num_layers = model.config.num_heads, model.config.num_layers
-
-    #     elif model_name in ["EleutherAI/gpt-j-6B"]:
-    #         model = GPTJForCausalLM.from_pretrained("./saved_models/cached_models/" + model_name, revision="float16",torch_dtype=torch.float16,).to(device)
-    #         tokenizer = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + model_name, padding_side="left")
-    #         num_heads, num_layers = model.config.n_head, model.config.n_layer
-    #         head_dim, max_length = int(model.config.n_embd/num_heads), model.config.n_positions 
-    #         # num_heads = 16
-    #         # num_layers = 28
-
-
-    #     elif model_name in ["facebook/opt-350m", "facebook/opt-1.3b", "facebook/opt-2.7b", "facebook/opt-6.7b"]:
-    #         model = OPTForCausalLM.from_pretrained("./saved_models/cached_models/" + model_name).to(device)
-    #         num_heads, num_layers = model.config.num_attention_heads, model.config.num_hidden_layers
-
     if args.experiment == "compare_to_baselines":
         methods = ["random_structured", "mask_gradient_l2_structured", "magnitude_l2_structured","FASP", "ppl_only", "bias_only", "bias_ppl"]
         gammas = ["0.2","0.3","0.4","0.5","0.6", "0.7"]
@@ -97,12 +67,9 @@ if __name__ == "__main__":
         gammas = ["0.5"] # the value of gamma shouldn't matter here, but 0.5 is an arbitrary value that is not None
         pruned_heads_ratios = ["0.0"]
         head_knockouts = range(0,int(num_heads * num_layers))
-#,"nationality", "race_ethnicity", "religion", "sexual_orientation"
-    groups = ["gender_and_sex"]
+    groups = ["gender_and_sex","nationality", "race_ethnicity", "religion", "sexual_orientation"]
     seeds = ["1", "2", "3"]
-    # attn_scales = ["0.7", "0.8", "0.9", "1.0", "1.1", "1.2", "1.3", "None"]
-    # random_perturbations = ["True", "False"]
-#, "test"
+
     for model_name in args.model_list:
         for split in ["valid", "test"]:
             for method in methods:
@@ -112,9 +79,6 @@ if __name__ == "__main__":
                             for pruned_heads_ratio in pruned_heads_ratios:
                                 for group in groups:
                                     for head_knockout in head_knockouts:
-                                        # for beta in betas:
-                                            # for attn_scale in attn_scales:
-                                                # for random_perturbation in random_perturbations:
                                                     csv_directory = (
                                                         "/scratch/" + args.account + "/BOLD_2/ours/seed_"
                                                         + str(seed)
@@ -124,12 +88,8 @@ if __name__ == "__main__":
                                                         + "_h" + str(head_knockout)   
                                                         + "_" + str(split)  
                                                         + "/" + str(method) + "_" + str(pruned_heads_ratio) + "_gamma" + str(gamma) + "/"
-                                                        # + "_beta" + str(beta)
-                                                        # + "_attn_scale" + str(attn_scale) + "_rnd" + str(random_perturbation) + "/"                    
                                                     ) 
                                                     
-                                                    # print("ade y3m el group: ", group)
-                                                    # print(groups)
                                                     file_name = (
                                                         csv_directory
                                                         + model_name.replace("/", "_")
@@ -152,8 +112,6 @@ if __name__ == "__main__":
                                                             groups_split = groups_test
 
                                                         if (len(df) != len(list(groups_split["axis"][groups_split["axis"] == group]))):
-                                                            print(len(df))
-                                                            print(len(list(groups_split["axis"][groups_split["axis"] == group])))
                                                             print("Something is wrong!!")
                                                             continue
                                                         df["axis"] = list(groups_split["axis"][groups_split["axis"] == group])

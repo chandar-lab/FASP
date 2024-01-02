@@ -31,7 +31,7 @@ if __name__ == "__main__":
 
     for model_name in model_names:
       print(model_name)
-      biases_scores = "./output/compute_scores_" + str(args.model_list[0].replace("/", "_")) + ".csv"
+      biases_scores = "./output/head_scores_" + str(args.model_list[0].replace("/", "_")) + ".csv"
       biases = None
       if os.path.exists(biases_scores):
         df = pd.read_csv(biases_scores)
@@ -40,10 +40,10 @@ if __name__ == "__main__":
           if bias in df["Group"].unique():
             biases += [bias]
 
-      if model_name in ["gpt2", "gpt2-medium", "gpt2-large", "distilgpt2",  "gpt2-xl"]:
+      if model_name in ["gpt2","distilgpt2"]:
           model = AutoModelWithLMHead.from_pretrained("./saved_models/cached_models/" + model_name).to(device)
 
-      elif model_name in ["EleutherAI/gpt-neo-125M", "EleutherAI/gpt-neo-1.3B", "EleutherAI/gpt-neo-2.7B"]:
+      elif model_name in ["EleutherAI/gpt-neo-125M", "EleutherAI/gpt-neo-1.3B"]:
           model = GPTNeoForCausalLM.from_pretrained("./saved_models/cached_models/" + model_name).to(device)
 
       elif model_name in ["EleutherAI/gpt-j-6B"]:
@@ -56,7 +56,7 @@ if __name__ == "__main__":
       num_heads, num_layers = model_configs[model_name]["num_heads"], model_configs[model_name]["num_layers"] 
       head_dim, max_length = model_configs[model_name]["head_dim"], model_configs[model_name]["max_length"] 
 
-      if model_name in ["EleutherAI/gpt-neo-125M", "EleutherAI/gpt-neo-1.3B", "EleutherAI/gpt-neo-2.7B"]:
+      if model_name in ["EleutherAI/gpt-neo-125M", "EleutherAI/gpt-neo-1.3B"]:
         tokenizer = GPT2Tokenizer.from_pretrained("./saved_models/cached_tokenizers/" + model_name, padding_side="left")
       else:
         tokenizer = AutoTokenizer.from_pretrained("./saved_models/cached_tokenizers/" + model_name, padding_side="left")
@@ -90,7 +90,7 @@ if __name__ == "__main__":
 
             head_weights = []
 
-            if model_name in ["EleutherAI/gpt-neo-125M", "EleutherAI/gpt-neo-1.3B", "EleutherAI/gpt-neo-2.7B"]:
+            if model_name in ["EleutherAI/gpt-neo-125M", "EleutherAI/gpt-neo-1.3B"]:
               for name, para in model.named_parameters():
                 if name in ["transformer.h." + str(layer_id) + ".attn.attention.k_proj.weight", "transformer.h." + str(layer_id) + ".attn.attention.v_proj.weight", "transformer.h." + str(layer_id) + ".attn.attention.q_proj.weight","transformer.h." + str(layer_id) + ".attn.attention.out_proj.weight"]:
                   head_weights.append(para)
@@ -117,7 +117,7 @@ if __name__ == "__main__":
               head_attn_bias = torch.randn(0).to(device) #any empty tensor because this model does not have a bias parameter for the attention heads
               head_proj_weight = torch.flatten(head_weights[3][:,start_idx:end_idx])
 
-            if model_name in ["gpt2", "gpt2-medium", "gpt2-large", "distilgpt2"]:
+            if model_name in ["gpt2", "distilgpt2"]:
               for name, para in model.named_parameters():
                 if name in ["transformer.h." + str(layer_id) + ".attn.c_attn.weight", "transformer.h." + str(layer_id) + ".attn.c_attn.bias", "transformer.h." + str(layer_id) + ".attn.c_proj.weight"]:
                   head_weights.append(para)
