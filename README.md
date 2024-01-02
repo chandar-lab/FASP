@@ -4,6 +4,13 @@ Welcome to the official repository for the AAAI [paper](https://arxiv.org/pdf/23
 <div style="text-align: center">
 <img src="FASP_figure.png" width="400">
 <p style="text-align: center;"> </p>
+Illustration of applying FASP to a model with 6
+layers and 12 heads per layer, e.g. DistilGPT-2. Initially, we
+identify and exclude the heads that significantly impact performance
+from the pruning process (black squares). Subsequently,
+the remaining heads are prioritized for removal
+based on their contribution to bias, ensuring that the heads
+contributing the most to bias are pruned first (red squares).
 </div>
 
 ## Running the experiments
