@@ -15,11 +15,14 @@ Get started with the Colab tutorial, `FASP_AAAI24_reproducibility.ipynb`, which 
 
 ## Citation
 ```
-@article{zayed2023fairness,
-  title={Fairness-Aware Structured Pruning in Transformers},
-  author={Zayed, Abdelrahman and Mordido, Goncalo and Shabanian, Samira and Baldini, Ioana and Chandar, Sarath},
-  journal={arXiv preprint arXiv:2312.15398},
-  year={2023}
+@inproceedings{zayed2024fairness,
+  title={Fairness-aware structured pruning in transformers},
+  author={Zayed, Abdelrahman and Mordido, Gon{\c{c}}alo and Shabanian, Samira and Baldini, Ioana and Chandar, Sarath},
+  booktitle={Proceedings of the AAAI Conference on Artificial Intelligence},
+  volume={38},
+  number={20},
+  pages={22484--22492},
+  year={2024}
 }
 
 
