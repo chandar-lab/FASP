@@ -1,4 +1,4 @@
-# [Fairness-Aware Structured Pruning in Transformers](https://arxiv.org/pdf/2312.15398.pdf) (AAAI 2024)
+# Fairness-Aware Structured Pruning in Transformers ([AAAI 2024](https://arxiv.org/pdf/2312.15398.pdf))
 We show that certain attention heads are responsible for bias and pruning them improves fairness.
 
 <div style="text-align: center">
