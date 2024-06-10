@@ -1,5 +1,11 @@
-# Fairness-Aware Structured Pruning in Transformers (AAAI 2024)
-Welcome to the official repository for the AAAI [paper](https://arxiv.org/pdf/2312.15398.pdf) “Fairness-Aware Structured Pruning in Transformers”. We present a novel method to prune the attention heads that negatively impact fairness in transformer-based models while retaining most of the language modeling ability.
+# [Fairness-Aware Structured Pruning in Transformers](https://arxiv.org/pdf/2312.15398.pdf) (AAAI 2024)
+We show that certain attention heads are responsible for bias and pruning them improves fairness.
+
+<div style="text-align: center">
+<img src="FASP.png" width="400">
+<p style="text-align: center;">  </p>
+</div>
+
 
 ## How it works
 The figure below illustrates how FASP is applied to a model with $6$ layers and $12$ heads per layer, e.g. DistilGPT-2. We identify and exclude the heads that significantly impact performance from the pruning process (black squares). Subsequently, the remaining heads are prioritized for removal
